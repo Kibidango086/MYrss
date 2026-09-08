@@ -1,0 +1,23 @@
+{
+  "name": "myrss",
+  "version": "0.1.0",
+  "description": "A native GPU-accelerated RSS reader built with GPUIX and Material You",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "bun --hot src/main.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gpuix/native": "0.5.1",
+    "@gpuix/react": "0.5.1",
+    "@material/material-color-utilities": "0.3.0",
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "@types/react": "^19.2.0",
+    "typescript": "^5.9.3"
+  }
+}

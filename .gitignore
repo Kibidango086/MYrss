@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# build / runtime artifacts
+*.log
+work/
+
+# local tooling / editor
+.agents/
+.codex/
+.idea/
+.vscode/
+.DS_Store
+.sakura-ide/
+.zed/
+
+# OS / misc
+*.tmp
