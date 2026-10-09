@@ -2,17 +2,20 @@ import React, { useState, useRef, useCallback } from "react"
 import { motion } from "@gpuix/react"
 import { MaterialIcon, type MaterialSymbol } from "../icons.js"
 import { useMaterialTheme } from "./provider.js"
-import { MOTION_EASE, MOTION_ENTER, MOTION_EXIT, font } from "./shared.js"
+import { MOTION_EASE, MOTION_ENTER, MOTION_EXIT, font, type A11yProps } from "./shared.js"
 import { StateLayer } from "./surfaces.js"
 import { Card } from "./surfaces.js"
 import { Divider } from "./layout.js"
+import { a11y } from "../jsx/intrinsics.js"
+import { elevationShadow } from "../theme.js"
+import { useRipple } from "./ripple.js"
 
 export function TopAppBar({ avatar, title, actions }: { avatar?: string; title: string; actions?: React.ReactNode }) {
   const theme = useMaterialTheme()
   return (
-    <div style={{ width: "100%", height: theme.metrics.navHeight, flexShrink: 0, display: "flex", flexDirection: "row", alignItems: "center", gap: theme.metrics.controlGap, paddingLeft: 16, paddingRight: 16, backgroundColor: theme.surface }}>
+    <div style={{ width: "100%", height: theme.metrics.appBarHeight, flexShrink: 0, display: "flex", flexDirection: "row", alignItems: "center", gap: theme.metrics.controlGap, paddingLeft: 16, paddingRight: 16, backgroundColor: theme.surface }}>
       {avatar ? <img src={avatar} alt="" objectFit="cover" style={{ width: 36, height: 36, marginRight: 12, borderRadius: theme.shape.full }} /> : null}
-      <text style={{ flexGrow: 1, minWidth: 0, color: theme.onSurface, ...font(theme.typescale.titleLarge) }}>{title}</text>
+      <text {...a11y({ role: "heading", ariaLevel: 1 }, title)} style={{ flexGrow: 1, minWidth: 0, color: theme.onSurface, ...font(theme.typescale.titleLarge) }}>{title}</text>
       <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: theme.metrics.controlGap }}>{actions}</div>
     </div>
   )
@@ -25,7 +28,7 @@ export function NavigationDrawer({ header, children, footer, width }: {
   width?: number
 }) {
   const theme = useMaterialTheme()
-  const railWidth = width ?? theme.metrics.railWidth
+  const railWidth = width ?? theme.metrics.drawerWidth
   const contentWidth = railWidth - theme.metrics.layoutGap * 2
   return (
     <motion.div
@@ -43,7 +46,8 @@ export function NavigationDrawer({ header, children, footer, width }: {
       }}
     >
       <div style={{ width: contentWidth, height: "100%" }}>
-        <Card variant="filled" style={{ height: "100%", gap: theme.metrics.sectionGap }}>
+        {/* Flutter's Drawer rests at elevation 1. */}
+        <Card variant="filled" style={{ height: "100%", gap: theme.metrics.sectionGap, ...elevationShadow(theme, 1) }}>
           {header}
           <Divider />
           <div style={{ display: "flex", flexDirection: "column", gap: 4, flexGrow: 1, minHeight: 0 }}>{children}</div>
@@ -74,28 +78,37 @@ export function NavigationRail({ children, header, align = "center" }: {
   )
 }
 
-export function NavigationItem({ label, badge, active, onClick, icon, compact }: {
+export function NavigationItem({ label, badge, active, onClick, icon, compact, ...rest }: {
   label: string
   badge?: number
   active?: boolean
   onClick?: () => void
   icon?: MaterialSymbol
   compact?: boolean
-}) {
+} & A11yProps) {
   const theme = useMaterialTheme()
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
+  const a11yProps = a11y(
+    { ...rest, ariaSelected: rest.ariaSelected ?? active },
+    badge ? `${label}, ${badge} unread` : label,
+    "link",
+  )
+  const ripple = useRipple({ color: active ? theme.onSecondaryContainer : theme.onSurfaceVariant, radius: compact ? 0 : active ? theme.shape.full : theme.shape.medium })
 
   if (compact) {
     return (
       <div
+        {...a11yProps}
+        ref={ripple.ref}
         onClick={onClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => { setHovered(false); setPressed(false) }}
-        onMouseDown={() => setPressed(true)}
+        onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
         onMouseUp={() => setPressed(false)}
         style={{
           width: 56,
+          overflow: "hidden",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -124,6 +137,7 @@ export function NavigationItem({ label, badge, active, onClick, icon, compact }:
             }}
           />
           {!active ? <StateLayer visible={hovered} pressed={pressed} color={theme.onSurfaceVariant} radius={theme.shape.full} /> : null}
+          {ripple.layer}
           <MaterialIcon name={icon ?? "home"} color={active ? theme.onSecondaryContainer : theme.onSurfaceVariant} size={24} />
           {badge ? (
             <div style={{ position: "absolute", top: -4, right: 2, minWidth: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", paddingLeft: 5, paddingRight: 5, borderRadius: theme.shape.full, backgroundColor: theme.error, pointerEvents: "none" }}>
@@ -144,10 +158,12 @@ export function NavigationItem({ label, badge, active, onClick, icon, compact }:
   const itemRadius = active ? theme.shape.full : pressed ? theme.shape.small : theme.shape.medium
   return (
     <motion.div
+      {...a11yProps}
+      ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
+      onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
       onMouseUp={() => setPressed(false)}
       initial={false}
       animate={{ opacity: pressed ? .86 : 1, left: pressed ? -2 : 0, borderRadius: itemRadius }}
@@ -162,13 +178,17 @@ export function NavigationItem({ label, badge, active, onClick, icon, compact }:
         paddingRight: 16,
         backgroundColor: active ? theme.secondaryContainer : "transparent",
         position: "relative",
+        overflow: "hidden",
         cursor: "pointer",
       }}
     >
       {!active ? <StateLayer visible={hovered} pressed={pressed} color={theme.onSurfaceVariant} radius={theme.shape.full} /> : null}
+      {ripple.layer}
+      {/* No nested handler: the row is one hit target, so a press on the icon
+          ripples like a press anywhere else. */}
       {icon ? (
-        <div onClick={onClick} style={{ display: "flex", alignItems: "center", cursor: "pointer" }}>
-          <MaterialIcon name={icon} color={active ? theme.onSecondaryContainer : theme.onSurfaceVariant} size={22} />
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <MaterialIcon name={icon} color={active ? theme.onSecondaryContainer : theme.onSurfaceVariant} size={24} />
         </div>
       ) : null}
       <text style={{ flexGrow: 1, minWidth: 0, marginLeft: icon ? 12 : 0, color: active ? theme.onSecondaryContainer : theme.onSurfaceVariant, ...font(theme.typescale.labelLarge) }}>{label}</text>
@@ -208,12 +228,15 @@ export function Tabs({ items, activeIndex, onTabChange, variant = "primary" }: {
     : activeIndex * tabWidth
 
   return (
-    <div style={{
-      width: "100%",
-      display: "flex",
-      flexDirection: "column",
-      backgroundColor: variant === "primary" ? theme.surface : theme.surfaceContainer,
-    }}>
+    <div
+      {...a11y({ role: "tablist" })}
+      style={{
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        backgroundColor: variant === "primary" ? theme.surface : theme.surfaceContainer,
+      }}
+    >
       <div style={{
         width: "100%",
         height: 48,
@@ -221,15 +244,16 @@ export function Tabs({ items, activeIndex, onTabChange, variant = "primary" }: {
         flexDirection: "row",
         position: "relative",
       }}>
-        {items.map((item, index) =>
-          TabButton({
-            item,
-            active: index === activeIndex,
-            variant,
-            onClick: () => onTabChange?.(index),
-            tabCount,
-          })
-        )}
+        {items.map((item, index) => (
+          <TabButton
+            key={item.label}
+            item={item}
+            active={index === activeIndex}
+            variant={variant}
+            onClick={() => onTabChange?.(index)}
+            tabCount={tabCount}
+          />
+        ))}
       </div>
       {/* Animated indicator */}
       <div style={{ width: "100%", height: 3, position: "relative" }}>
@@ -263,13 +287,16 @@ function TabButton({ item, active, variant, onClick, tabCount }: {
   const theme = useMaterialTheme()
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
+  const ripple = useRipple({ color: theme.primary })
 
   return (
     <div
+      {...a11y({ role: "tab", ariaSelected: active }, item.label)}
+      ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
+      onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
       onMouseUp={() => setPressed(false)}
       style={{
         flexGrow: 1,
@@ -281,12 +308,14 @@ function TabButton({ item, active, variant, onClick, tabCount }: {
         justifyContent: "center",
         gap: variant === "primary" && item.icon ? 2 : 0,
         position: "relative",
+        overflow: "hidden",
         cursor: "pointer",
       }}
     >
       <StateLayer visible={hovered} pressed={pressed} color={theme.primary} radius={0} />
+      {ripple.layer}
       {variant === "primary" && item.icon ? (
-        <MaterialIcon name={item.icon} color={active ? theme.primary : theme.onSurfaceVariant} size={20} />
+        <MaterialIcon name={item.icon} color={active ? theme.primary : theme.onSurfaceVariant} size={24} />
       ) : null}
       <text style={{
         color: active ? theme.primary : theme.onSurfaceVariant,
@@ -313,26 +342,30 @@ export function NavigationBar({ destinations, activeIndex, onDestinationChange }
   const destCount = destinations.length
 
   return (
-    <div style={{
-      width: "100%",
-      height: 80,
-      flexShrink: 0,
-      display: "flex",
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: theme.surfaceContainer,
-      borderTopWidth: 1,
-      borderTopColor: theme.outlineVariant,
-    }}>
-      {destinations.map((dest, index) =>
-        NavigationBarItem({
-          destination: dest,
-          active: index === activeIndex,
-          onClick: () => onDestinationChange?.(index),
-          destCount,
-        })
-      )}
+    <div
+      {...a11y({ role: "tablist" })}
+      style={{
+        width: "100%",
+        height: 80,
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.surfaceContainer,
+        borderTopWidth: 1,
+        borderColor: theme.outlineVariant,
+      }}
+    >
+      {destinations.map((dest, index) => (
+        <NavigationBarItem
+          key={dest.label}
+          destination={dest}
+          active={index === activeIndex}
+          onClick={() => onDestinationChange?.(index)}
+          destCount={destCount}
+        />
+      ))}
     </div>
   )
 }
@@ -346,13 +379,16 @@ function NavigationBarItem({ destination, active, onClick, destCount }: {
   const theme = useMaterialTheme()
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
+  const ripple = useRipple({ color: theme.onSurface })
 
   return (
     <div
+      {...a11y({ role: "tab", ariaSelected: active }, destination.label)}
+      ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
+      onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
       onMouseUp={() => setPressed(false)}
       style={{
         flexGrow: 1,
@@ -364,10 +400,12 @@ function NavigationBarItem({ destination, active, onClick, destCount }: {
         justifyContent: "center",
         gap: 4,
         position: "relative",
+        overflow: "hidden",
         cursor: "pointer",
       }}
     >
       <StateLayer visible={hovered} pressed={pressed} color={theme.onSurface} radius={0} />
+      {ripple.layer}
       {/* Icon container with active indicator */}
       <div style={{
         width: 64,
@@ -425,16 +463,19 @@ export function SegmentedButton({ items, selectedIndex, onSelectionChange }: {
   const segmentWidthPercent = itemCount > 0 ? 100 / itemCount : 0
 
   return (
-    <div style={{
-      display: "flex",
-      flexDirection: "row",
-      height: 40,
-      borderRadius: theme.shape.full,
-      borderWidth: 1,
-      borderColor: theme.outline,
-      overflow: "hidden",
-      position: "relative",
-    }}>
+    <div
+      {...a11y({ role: "radiogroup" })}
+      style={{
+        display: "flex",
+        flexDirection: "row",
+        height: 40,
+        borderRadius: theme.shape.full,
+        borderWidth: 1,
+        borderColor: theme.outline,
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
       {/* Sliding selection indicator */}
       <motion.div
         initial={false}
@@ -451,15 +492,16 @@ export function SegmentedButton({ items, selectedIndex, onSelectionChange }: {
           borderRadius: theme.shape.full,
         }}
       />
-      {items.map((item, index) =>
-        SegmentedButtonSegment({
-          item,
-          selected: index === selectedIndex,
-          onClick: () => onSelectionChange?.(index),
-          isFirst: index === 0,
-          isLast: index === itemCount - 1,
-        })
-      )}
+      {items.map((item, index) => (
+        <SegmentedButtonSegment
+          key={item.label}
+          item={item}
+          selected={index === selectedIndex}
+          onClick={() => onSelectionChange?.(index)}
+          isFirst={index === 0}
+          isLast={index === itemCount - 1}
+        />
+      ))}
     </div>
   )
 }
@@ -474,13 +516,16 @@ function SegmentedButtonSegment({ item, selected, onClick, isFirst, isLast }: {
   const theme = useMaterialTheme()
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
+  const ripple = useRipple({ color: theme.onSurface })
 
   return (
     <div
+      {...a11y({ role: "radio", ariaSelected: selected }, item.label)}
+      ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); setPressed(false) }}
-      onMouseDown={() => setPressed(true)}
+      onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
       onMouseUp={() => setPressed(false)}
       style={{
         flexGrow: 1,
@@ -492,10 +537,12 @@ function SegmentedButtonSegment({ item, selected, onClick, isFirst, isLast }: {
         justifyContent: "center",
         gap: 8,
         position: "relative",
+        overflow: "hidden",
         cursor: "pointer",
       }}
     >
       <StateLayer visible={hovered} pressed={pressed} color={theme.onSurface} radius={theme.shape.full} />
+      {ripple.layer}
       {selected && item.icon ? (
         <MaterialIcon name="check" color={theme.onSecondaryContainer} size={18} />
       ) : item.icon ? (

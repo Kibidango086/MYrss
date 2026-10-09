@@ -1,57 +1,25 @@
-import type { Key, ReactNode } from "react"
+// GPUIX JSX dev runtime for material-you-gpuix.
+//
+// Bun and other bundlers resolve `jsxImportSource` to `jsx-dev-runtime` in
+// development. The element factory comes from React, but the intrinsic prop
+// types must match `jsx-runtime.ts` exactly, or `role` / `aria-*`,
+// `onFileDrop`, `textDecoration` and `exit` would type only in production
+// builds.
+
+import type * as React from "react"
+import type { IntrinsicElements as GpuixIntrinsicElements } from "./intrinsics.js"
 
 export { Fragment, jsxDEV, jsxDEV as jsx, jsxDEV as jsxs } from "react/jsx-dev-runtime"
-
-type DevCommonProps = {
-  key?: Key | undefined
-  style?: Record<string, unknown> | undefined
-  children?: ReactNode | undefined
-  onClick?: ((event: { value?: unknown }) => void) | undefined
-  ref?: React.Ref<{ id: number } | null> | undefined
-  onMouseDown?: ((event: { value?: unknown }) => void) | undefined
-  onMouseUp?: ((event: { value?: unknown }) => void) | undefined
-  onMouseEnter?: ((event: { hovered?: boolean }) => void) | undefined
-  onMouseLeave?: ((event: { hovered?: boolean }) => void) | undefined
-}
-
-type AnchoredProps = DevCommonProps & {
-  position?: { x: number; y: number }
-  side?: "top" | "right" | "bottom" | "left"
-  align?: "start" | "center" | "end"
-  anchor?: "topLeft" | "topCenter" | "topRight" | "rightCenter" | "bottomRight" | "bottomCenter" | "bottomLeft" | "leftCenter"
-  gap?: number
-  offset?: { x: number; y: number }
-  fit?: "switch" | "snap"
-  snapMargin?: number
-  deferred?: boolean
-  priority?: number
-  occlude?: boolean
-}
+export type { EventPayload, Style } from "./intrinsics.js"
 
 export namespace JSX {
   export type Element = React.JSX.Element
   export type ElementType = React.JSX.ElementType
+  export type ElementClass = React.JSX.ElementClass
+  export type ElementAttributesProperty = React.JSX.ElementAttributesProperty
+  export type ElementChildrenAttribute = React.JSX.ElementChildrenAttribute
+  export type IntrinsicAttributes = React.JSX.IntrinsicAttributes
+  export type IntrinsicClassAttributes<T> = React.JSX.IntrinsicClassAttributes<T>
 
-  export interface IntrinsicElements {
-    div: DevCommonProps
-    text: DevCommonProps
-    img: DevCommonProps & { src?: string; alt?: string; objectFit?: string }
-    svg: DevCommonProps & { src?: string }
-    input: DevCommonProps & { value?: string; placeholder?: string; onChange?: (event: { value?: string }) => void }
-    textarea: DevCommonProps & InputExtra
-    markdown: DevCommonProps & { source?: string; theme?: Record<string, unknown>; onLinkClick?: (event: { value?: string }) => void }
-    anchored: AnchoredProps
-    "virtual-list": DevCommonProps & { alignment?: "top" | "bottom"; estimatedItemHeight?: number; overdraw?: number }
-  }
-}
-
-interface InputExtra {
-  value?: string
-  placeholder?: string
-  minRows?: number
-  maxRows?: number
-  theme?: Record<string, string>
-  onChange?: (event: { value?: string }) => void
-  onFocus?: () => void
-  onBlur?: () => void
+  export interface IntrinsicElements extends GpuixIntrinsicElements {}
 }

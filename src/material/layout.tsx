@@ -2,6 +2,9 @@ import React, { useState } from "react"
 import { useMaterialTheme } from "./provider.js"
 import { font } from "./shared.js"
 import { StateLayer } from "./surfaces.js"
+import { a11y } from "../jsx/intrinsics.js"
+import { useRipple } from "./ripple.js"
+import type { A11yProps } from "./shared.js"
 
 export function LayoutShell({ children, appBar, footer, overlays }: {
   children: React.ReactNode
@@ -56,7 +59,7 @@ export function LayoutFooter({ children }: { children: React.ReactNode }) {
         paddingLeft: theme.metrics.layoutGap,
         paddingRight: theme.metrics.layoutGap,
         borderTopWidth: 1,
-        borderTopColor: theme.outlineVariant,
+        borderColor: theme.outlineVariant,
       }}
     >
       <div style={{ width: "100%", maxWidth: 920, display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", flexWrap: "wrap", gap: theme.metrics.controlGap }}>{children}</div>
@@ -69,22 +72,28 @@ export function Divider({ inset = false }: { inset?: boolean }) {
   return <div style={{ height: 1, marginTop: inset ? 0 : 8, marginBottom: inset ? 0 : 8, marginLeft: inset ? 72 : 0, backgroundColor: theme.outlineVariant }} />
 }
 
-export function ListItem({ headline, supporting, leading, trailing, onClick }: {
+export function ListItem({ headline, supporting, leading, trailing, onClick, onFileDrop, ...rest }: {
   headline: string
   supporting?: string
   leading?: React.ReactNode
   trailing?: React.ReactNode
   onClick?: () => void
-}) {
+  /** Absolute paths dropped from the OS file manager onto this row. */
+  onFileDrop?: (paths: string[]) => void
+} & A11yProps) {
   const theme = useMaterialTheme()
   const [hovered, setHovered] = useState(false)
   const [pressed, setPressed] = useState(false)
+  const ripple = useRipple({ color: theme.onSurface })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
+      onFileDrop={onFileDrop ? (event) => onFileDrop(event.paths ?? []) : undefined}
+      {...a11y(rest, onClick ? headline : undefined, onClick ? "button" : undefined)}
       onMouseEnter={onClick ? () => setHovered(true) : undefined}
       onMouseLeave={onClick ? () => { setHovered(false); setPressed(false) } : undefined}
-      onMouseDown={onClick ? () => setPressed(true) : undefined}
+      onMouseDown={onClick ? (event) => { setPressed(true); ripple.onMouseDown(event) } : undefined}
       onMouseUp={onClick ? () => setPressed(false) : undefined}
       style={{
         width: "100%",
@@ -96,9 +105,11 @@ export function ListItem({ headline, supporting, leading, trailing, onClick }: {
         paddingRight: 16,
         cursor: onClick ? "pointer" : "default",
         position: "relative",
+        overflow: "hidden",
       }}
     >
       {onClick ? <StateLayer visible={hovered} pressed={pressed} color={theme.onSurface} radius={0} /> : null}
+      {onClick ? ripple.layer : null}
       {leading}
       <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
         <text style={{ color: theme.onSurface, ...font(theme.typescale.bodyLarge), lineClamp: 1 }}>{headline}</text>
@@ -135,11 +146,11 @@ export function Grid({ columns, children }: { columns: number; children: React.R
   return <div style={{ width: "100%", display: "grid", gridTemplateColumns: columns, gridColumnMin: "min-content", gap: theme.metrics.cardGap }}>{children}</div>
 }
 
-export function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+export function SectionHeader({ title, subtitle, level = 2 }: { title: string; subtitle?: string; level?: number }) {
   const theme = useMaterialTheme()
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4, marginBottom: theme.metrics.sectionGap }}>
-      <text style={{ color: theme.onSurface, ...font(theme.typescale.titleLarge) }}>{title}</text>
+      <text {...a11y({ role: "heading", ariaLevel: level }, title)} style={{ color: theme.onSurface, ...font(theme.typescale.titleLarge) }}>{title}</text>
       {subtitle ? <text style={{ color: theme.onSurfaceVariant, ...font(theme.typescale.bodyMedium) }}>{subtitle}</text> : null}
     </div>
   )

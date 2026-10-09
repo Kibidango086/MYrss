@@ -272,6 +272,12 @@ export async function fetchFeed(url: string): Promise<FeedData> {
 
 /** Merge a fetched feed over the existing cache, de-duplicating items by id. */
 export function mergeFeed(existing: FeedData | undefined, incoming: FeedData): FeedData {
+  // A failed parse returns a stub whose only real content is the error (it even
+  // carries the URL as a placeholder title). Letting that through would rename
+  // a good cached feed to its own URL on one bad response.
+  if (incoming.error && existing) {
+    return { ...existing, error: incoming.error, fetchedAt: incoming.fetchedAt }
+  }
   const seen = new Set<string>()
   const items: FeedItem[] = []
   const push = (item: FeedItem) => {

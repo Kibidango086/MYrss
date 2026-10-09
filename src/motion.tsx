@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from "react"
-import { motion, useGpuixRequired } from "@gpuix/react"
+import { AnimatePresence, motion, useGpuixRequired, useIsPresent, type MotionDivProps } from "@gpuix/react"
+
+// GPUIX 0.10.0 added exit animations: `motion.div` accepts an `exit` target and
+// `AnimatePresence` keeps the leaving node mounted until the native tween
+// reports `motionComplete`. Re-exported here so an application using this
+// library has a single import for Material motion.
+export { AnimatePresence, useIsPresent, usePresence } from "@gpuix/react"
 
 export const MOTION_EASE = {
   standard: [0.2, 0, 0, 1] as [number, number, number, number],
@@ -13,6 +19,38 @@ export const MOTION_DURATION = {
   large: 0.34,
 }
 
+/** Wrap conditional content so it plays a Material exit animation before it unmounts. */
+export function Presence({ show, children }: { show: boolean; children: React.ReactNode }) {
+  return <AnimatePresence>{show ? children : null}</AnimatePresence>
+}
+
+/**
+ * `motion.div` that picks the MD3 curve from its presence state.
+ *
+ * A leaving child is re-rendered from the *retained* React element, so its
+ * props still say `open` / `show`; a component therefore cannot choose an exit
+ * transition from its own props. `useIsPresent` reads the presence context
+ * without registering an exit child — registering here would deadlock
+ * `AnimatePresence`, because only the inner `motion.div` ever reports
+ * `motionComplete`.
+ */
+export function PresenceMotion({ enterDuration = MOTION_DURATION.medium, exitDuration = MOTION_DURATION.short, transition, ...props }: MotionDivProps & {
+  enterDuration?: number
+  exitDuration?: number
+}) {
+  const present = useIsPresent()
+  return (
+    <motion.div
+      {...props}
+      transition={{
+        duration: present ? enterDuration : exitDuration,
+        ease: present ? MOTION_EASE.decelerate : MOTION_EASE.accelerate,
+        ...transition,
+      }}
+    />
+  )
+}
+
 export function FadeSlideIn({ children, delay = 0, offset = 18 }: {
   children: React.ReactNode
   delay?: number
@@ -22,6 +60,7 @@ export function FadeSlideIn({ children, delay = 0, offset = 18 }: {
     <motion.div
       initial={{ opacity: 0, left: offset }}
       animate={{ opacity: 1, left: 0 }}
+      exit={{ opacity: 0, left: offset }}
       transition={{ duration: MOTION_DURATION.large, delay, ease: MOTION_EASE.decelerate }}
       style={{ position: "relative" }}
     >
@@ -39,6 +78,7 @@ export function RiseIn({ children, delay = 0, offset = 22 }: {
     <motion.div
       initial={{ opacity: 0, top: offset }}
       animate={{ opacity: 1, top: 0 }}
+      exit={{ opacity: 0, top: offset }}
       transition={{ duration: MOTION_DURATION.large, delay, ease: MOTION_EASE.decelerate }}
       style={{ position: "relative" }}
     >
@@ -73,6 +113,7 @@ export function Collapse({ open, height, children }: {
         left: open ? 0 : -10,
         borderRadius: open ? 12 : 20,
       }}
+      exit={{ height: 0, opacity: 0, left: -10, borderRadius: 20 }}
       transition={{
         duration: open ? MOTION_DURATION.large : MOTION_DURATION.short,
         ease: open ? MOTION_EASE.decelerate : MOTION_EASE.accelerate,

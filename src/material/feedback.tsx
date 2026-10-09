@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react"
-import { motion } from "@gpuix/react"
+import { AnimatePresence, motion } from "@gpuix/react"
 import { useMaterialTheme } from "./provider.js"
-import { MOTION_ENTER, font } from "./shared.js"
+import { font } from "./shared.js"
 import { FloatingSurface } from "./surfaces.js"
-import { useResponsiveWindowSize } from "../motion.js"
+import { a11y } from "../jsx/intrinsics.js"
+import { elevationShadow } from "../theme.js"
+import { PresenceMotion, useResponsiveWindowSize } from "../motion.js"
 
 // ─── Snackbar ────────────────────────────────────────────────────────────────
 
@@ -15,22 +17,38 @@ export function Snackbar({ open, message, actionLabel, onAction }: {
 }) {
   const theme = useMaterialTheme()
   const windowSize = useResponsiveWindowSize()
-  if (!open) return null
   const toastWidth = Math.min(560, Math.max(288, windowSize.width - 48))
-  const toastHeight = 52
+  const toastHeight = theme.metrics.snackbarHeight
   const toastX = Math.round((windowSize.width - toastWidth) / 2)
   const toastY = Math.max(16, windowSize.height - toastHeight - 32)
   return (
-    <FloatingSurface open={open} x={toastX} y={toastY} width={toastWidth} height={toastHeight} priority={30} occlude={false} background={theme.inverseSurface}>
-      <motion.div initial={{ opacity: 0, height: toastHeight - 12 }} animate={{ opacity: 1, height: toastHeight }} transition={{ duration: .24, ease: MOTION_ENTER }} style={{ width: toastWidth, height: toastHeight, display: "flex", alignItems: "center", gap: 16, paddingLeft: 16, paddingRight: 8, borderRadius: theme.shape.small, backgroundColor: theme.inverseSurface, pointerEvents: "auto" }}>
-        <text style={{ flexGrow: 1, color: theme.inverseOnSurface, ...font(theme.typescale.bodyMedium) }}>{message}</text>
-        {actionLabel ? (
-          <div onClick={onAction} style={{ paddingTop: 8, paddingBottom: 8, paddingLeft: 12, paddingRight: 12, borderRadius: theme.shape.full, cursor: "pointer" }}>
-            <text style={{ color: theme.inversePrimary, ...font(theme.typescale.labelLarge) }}>{actionLabel}</text>
-          </div>
-        ) : null}
-      </motion.div>
-    </FloatingSurface>
+    <AnimatePresence>
+      {open ? (
+        <FloatingSurface key="snackbar" open x={toastX} y={toastY} width={toastWidth} height={toastHeight} priority={30} occlude={false} background={theme.inverseSurface}>
+          {/* MD3 slides a snackbar up as it fades in, and back down as it leaves. */}
+          <PresenceMotion
+            {...a11y({ role: "status" }, message)}
+            initial={{ opacity: 0, top: 12 }}
+            animate={{ opacity: 1, top: 0 }}
+            exit={{ opacity: 0, top: 12 }}
+            enterDuration={.24}
+            exitDuration={.2}
+            style={{ width: toastWidth, height: toastHeight, display: "flex", alignItems: "center", gap: 16, paddingLeft: 16, paddingRight: 8, borderRadius: theme.shape.extraSmall, backgroundColor: theme.inverseSurface, pointerEvents: "auto", position: "relative", ...elevationShadow(theme, 6) }}
+          >
+            <text style={{ flexGrow: 1, color: theme.inverseOnSurface, ...font(theme.typescale.bodyMedium) }}>{message}</text>
+            {actionLabel ? (
+              <div
+                {...a11y({}, actionLabel, "button")}
+                onClick={onAction}
+                style={{ paddingTop: 8, paddingBottom: 8, paddingLeft: 12, paddingRight: 12, borderRadius: theme.shape.full, cursor: "pointer" }}
+              >
+                <text style={{ color: theme.inversePrimary, ...font(theme.typescale.labelLarge) }}>{actionLabel}</text>
+              </div>
+            ) : null}
+          </PresenceMotion>
+        </FloatingSurface>
+      ) : null}
+    </AnimatePresence>
   )
 }
 
@@ -84,7 +102,10 @@ export function CircularProgress({ value, size = 40, strokeWidth = 4, color }: C
   const center = size / 2
 
   return (
-    <div style={{ width: size, height: size, position: "relative" }}>
+    <div
+      {...a11y({ role: "progressbar", ariaValueText: determinate ? `${Math.round(filledSegments / CIRCULAR_SEGMENTS * 100)}%` : "loading" }, "Progress")}
+      style={{ width: size, height: size, position: "relative" }}
+    >
       {Array.from({ length: CIRCULAR_SEGMENTS }, (_, i) => {
         const angle = (i * SEGMENT_ANGLE_DEG * Math.PI) / 180
         // Position each segment dot around the circle
@@ -178,7 +199,10 @@ export function LinearProgress({ value, color, height = 4, trackWidth = 240 }: L
     const clampedValue = Math.min(100, Math.max(0, value))
     const barWidth = Math.round((clampedValue / 100) * trackWidth)
     return (
-      <div style={{ width: trackWidth, height, backgroundColor: trackColor, borderRadius, overflow: "hidden", position: "relative" }}>
+      <div
+        {...a11y({ role: "progressbar", ariaValueText: `${Math.round(clampedValue)}%` }, "Progress")}
+        style={{ width: trackWidth, height, backgroundColor: trackColor, borderRadius, overflow: "hidden", position: "relative" }}
+      >
         <motion.div
           initial={false}
           animate={{ width: barWidth }}
@@ -201,7 +225,10 @@ export function LinearProgress({ value, color, height = 4, trackWidth = 240 }: L
   const barLeft = Math.round(pos.leftFraction * trackWidth)
   const barWidth = Math.round(pos.widthFraction * trackWidth)
   return (
-    <div style={{ width: trackWidth, height, backgroundColor: trackColor, borderRadius, overflow: "hidden", position: "relative" }}>
+    <div
+      {...a11y({ role: "progressbar", ariaValueText: "loading" }, "Progress")}
+      style={{ width: trackWidth, height, backgroundColor: trackColor, borderRadius, overflow: "hidden", position: "relative" }}
+    >
       <motion.div
         initial={false}
         animate={{
@@ -256,39 +283,45 @@ export function Badge({ content, visible = true, max = 99, color, children }: Ba
   return (
     <div style={{ position: "relative", display: "inline-flex" }}>
       {children}
-      {visible ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.15 }}
-          style={showDot ? {
-            position: "absolute",
-            top: -2,
-            right: -2,
-            width: dotSize,
-            height: dotSize,
-            borderRadius: dotSize / 2,
-            backgroundColor: badgeColor,
-          } : {
-            position: "absolute",
-            top: -4,
-            right: -6,
-            minWidth: numberMinWidth,
-            height: numberHeight,
-            borderRadius: numberHeight / 2,
-            backgroundColor: badgeColor,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            paddingLeft: numberPaddingH,
-            paddingRight: numberPaddingH,
-          }}
-        >
-          {!showDot ? (
-            <text style={{ color: textColor, fontSize: 11, fontWeight: 500, lineHeight: 16 }}>{displayText}</text>
-          ) : null}
-        </motion.div>
-      ) : null}
+      <AnimatePresence>
+        {visible ? (
+          <PresenceMotion
+            key="badge"
+            {...a11y({ role: "status" }, showDot ? undefined : `${displayText} new items`)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            enterDuration={0.15}
+            exitDuration={0.12}
+            style={showDot ? {
+              position: "absolute",
+              top: -2,
+              right: -2,
+              width: dotSize,
+              height: dotSize,
+              borderRadius: dotSize / 2,
+              backgroundColor: badgeColor,
+            } : {
+              position: "absolute",
+              top: -4,
+              right: -6,
+              minWidth: numberMinWidth,
+              height: numberHeight,
+              borderRadius: numberHeight / 2,
+              backgroundColor: badgeColor,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              paddingLeft: numberPaddingH,
+              paddingRight: numberPaddingH,
+            }}
+          >
+            {!showDot ? (
+              <text style={{ color: textColor, fontSize: 11, fontWeight: 500, lineHeight: 16 }}>{displayText}</text>
+            ) : null}
+          </PresenceMotion>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }

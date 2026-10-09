@@ -1,6 +1,6 @@
 import React from "react"
 import { openInBrowser } from "./browser.js"
-import type { AppearanceMode, MaterialTheme } from "./theme.js"
+import { nativeTheme, type AppearanceMode, type MaterialTheme } from "./theme.js"
 
 const ENTITIES: Record<string, string> = {
   amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", hellip: "…",
@@ -65,6 +65,86 @@ export function htmlToPlainText(input: string): string {
     .trim()
 }
 
+/** One piece of an article body, in document order. */
+export type ContentBlock =
+  | { kind: "text"; markdown: string }
+  | { kind: "image"; url: string; alt: string }
+
+const IMAGE_TAG = /<img\b[^>]*>/gi
+
+function attribute(tag: string, name: string): string | undefined {
+  const match = tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']*)["']`, "i"))
+  return match?.[1]?.trim() || undefined
+}
+
+/**
+ * Split an HTML article body into ordered text and image blocks.
+ *
+ * `htmlToMarkdown` drops `<img>` — GPUIX's native `<markdown>` renderer has no
+ * image support — so a caller that just converts the whole body has no way to
+ * place pictures and is reduced to stacking them after the text. Splitting the
+ * body keeps each picture where the author put it.
+ *
+ * Lazy-loading feeds put the real source in `data-src` / `data-original`, so
+ * those are accepted when `src` is a placeholder. Non-http(s) sources, repeats
+ * of an already emitted URL, and anything past `maxImages` are skipped.
+ */
+export function splitHtmlImages(html: string, maxImages = 12): ContentBlock[] {
+  const blocks: ContentBlock[] = []
+  const seen = new Set<string>()
+  let cursor = 0
+  let images = 0
+
+  const pushText = (chunk: string) => {
+    const markdown = htmlToMarkdown(chunk)
+    if (markdown) blocks.push({ kind: "text", markdown })
+  }
+
+  IMAGE_TAG.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = IMAGE_TAG.exec(html)) !== null) {
+    const tag = match[0]
+    const url = attribute(tag, "src") ?? attribute(tag, "data-src") ?? attribute(tag, "data-original")
+    const usable = Boolean(url && /^https?:\/\//i.test(url) && !seen.has(url) && images < maxImages)
+    if (!usable) continue
+    pushText(html.slice(cursor, match.index))
+    cursor = match.index + tag.length
+    seen.add(url as string)
+    images += 1
+    blocks.push({ kind: "image", url: url as string, alt: attribute(tag, "alt") ?? "" })
+  }
+  pushText(html.slice(cursor))
+  return blocks
+}
+
+/**
+ * Render an already-converted markdown string with the Material palette.
+ *
+ * Use this — not `RichText` — for the pieces `splitHtmlImages` returns:
+ * converting twice would run `decodeEntities` over text that is already
+ * decoded, so a literal `<` in the article would then be stripped as a tag.
+ */
+export function RichMarkdown({ markdown, theme, mode, lineClamp }: {
+  markdown: string
+  theme: MaterialTheme
+  mode: AppearanceMode
+  lineClamp?: number
+}) {
+  return (
+    <markdown
+      source={markdown}
+      onLinkClick={(event) => {
+        const url = String(event.value ?? "")
+        if (url.startsWith("https://") || url.startsWith("http://")) openInBrowser(url)
+      }}
+      // GPUIX paints markdown in Rust, so the Material palette and typescale
+      // have to reach it through the native theme, not through React styles.
+      theme={nativeTheme(theme, { appearance: mode, bg: theme.surfaceContainerLow, border: theme.surfaceContainerLow })}
+      style={lineClamp ? { lineClamp } : undefined}
+    />
+  )
+}
+
 export function RichText({ source, theme, mode, lineClamp }: {
   source: string
   theme: MaterialTheme
@@ -72,24 +152,11 @@ export function RichText({ source, theme, mode, lineClamp }: {
   lineClamp?: number
 }) {
   return (
-    <markdown
-      source={htmlToMarkdown(source)}
-      onLinkClick={(event) => {
-        const url = String(event.value ?? "")
-        if (url.startsWith("https://") || url.startsWith("http://")) openInBrowser(url)
-      }}
-      theme={{
-        appearance: mode,
-        bg: theme.surfaceContainerLow,
-        border: theme.surfaceContainerLow,
-        text: theme.onSurface,
-        textMuted: theme.onSurfaceVariant,
-        textFaint: theme.outline,
-        accent: theme.primary,
-        fontSans: theme.fontSans,
-        fontMono: theme.fontMono,
-      }}
-      style={lineClamp ? { lineClamp } : undefined}
+    <RichMarkdown
+      markdown={htmlToMarkdown(source)}
+      theme={theme}
+      mode={mode}
+      lineClamp={lineClamp}
     />
   )
 }

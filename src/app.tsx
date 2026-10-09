@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { motion } from "@gpuix/react"
 import {
-  MaterialProvider, useMaterialTheme, TopAppBar, Button, FilledTextField, IconButton,
-  NavigationDrawer, Divider, LayoutShell, Snackbar, Switch, Badge,
+  MaterialProvider, useMaterialTheme, TopAppBar, Button, FilledTextField, FilterChip,
+  IconButton, NavigationDrawer, Divider, LayoutShell, SegmentedButton, Snackbar, Switch,
+  useRipple,
 } from "./material.js"
-import { RichText, htmlToPlainText } from "./rich-text.js"
+import { AnimatePresence, PresenceMotion, useResponsiveWindowSize } from "./motion.js"
+import { a11y } from "./jsx/intrinsics.js"
+import { stateLayer } from "./theme.js"
+import { RichMarkdown, splitHtmlImages } from "./rich-text.js"
 import { GlyphIcon, type MyIcon } from "./glyph-icons.js"
 import { MaterialIcon, type MaterialSymbol } from "./icons.js"
 import { fetchFeed, mergeFeed, hostLabel, type FeedData, type FeedItem } from "./feeds.js"
-import { loadState, saveState, type StoredState } from "./storage.js"
+import { AUTO_REFRESH_CHOICES, DEFAULT_SETTINGS, loadState, saveState, type StoredState } from "./storage.js"
+import { onWindowKey } from "./shortcuts.js"
 import { formatFullDate, formatRelative } from "./format.js"
 import { openInBrowser } from "./browser.js"
-import { cacheRemoteImages, extractImageUrls } from "./media.js"
+import { cacheRemoteImages } from "./media.js"
 
 type SelectionKey = string
 const ALL: SelectionKey = "__all__"
@@ -26,6 +30,8 @@ interface UiState {
   snackbar: string | null
   refreshing: Record<string, boolean>
   search: string
+  /** Show only unread articles in the list. */
+  unreadOnly: boolean
 }
 
 const DEFAULT_UI: UiState = {
@@ -36,12 +42,22 @@ const DEFAULT_UI: UiState = {
   snackbar: null,
   refreshing: {},
   search: "",
+  unreadOnly: false,
 }
 
 function fontOf(scale: { size: number; weight: number; lineHeight: number }) {
   return { fontSize: scale.size, fontWeight: scale.weight, lineHeight: scale.lineHeight }
 }
-const MOTION_EASE: [number, number, number, number] = [0.2, 0, 0, 1]
+
+/**
+ * Compose an MD3 state layer over a colour as `#rrggbbaa`.
+ *
+ * GPUIX parses 8-digit hex (csscolorparser 0.8.3), so the alpha stays a named
+ * token instead of being sprinkled through the file as ad-hoc byte suffixes.
+ */
+function overlay(color: string, alpha: number) {
+  return `${color}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`
+}
 
 export function App() {
   const [state, setState] = useState<StoredState>(() => loadState())
@@ -99,11 +115,14 @@ export function App() {
 
   const shownEntries = useMemo(() => {
     const q = ui.search.trim().toLowerCase()
-    if (!q) return entriesForSelection
-    return entriesForSelection.filter((e) =>
-      (e.item.title ?? "").toLowerCase().includes(q) || (e.item.summary ?? "").toLowerCase().includes(q),
+    const base = ui.unreadOnly
+      ? entriesForSelection.filter((entry) => !readSet.has(entry.key))
+      : entriesForSelection
+    if (!q) return base
+    return base.filter((entry) =>
+      (entry.item.title ?? "").toLowerCase().includes(q) || (entry.item.summary ?? "").toLowerCase().includes(q),
     )
-  }, [entriesForSelection, ui.search])
+  }, [entriesForSelection, ui.search, ui.unreadOnly, readSet])
 
   // Selected feed metadata (for headers / empty states)
   const selectedFeedInfo = useMemo(() => {
@@ -129,13 +148,16 @@ export function App() {
     setState((prev) => ({ ...prev, read: prev.read.filter((id) => id !== key) }))
   }, [])
 
+  // Reads `prev`, never the render-scoped `starSet`: with a stale set a second
+  // click appended a duplicate instead of removing the star, so a newly
+  // starred article could never be un-starred.
   const toggleStar = useCallback((key: string) => {
-    setState((prev) => {
-      const starred = starSet.has(key)
+    setState((prev) => ({
+      ...prev,
+      starred: prev.starred.includes(key)
         ? prev.starred.filter((id) => id !== key)
-        : [...prev.starred, key]
-      return { ...prev, starred }
-    })
+        : [...prev.starred, key],
+    }))
   }, [])
 
   const openArticle = useCallback((key: string) => {
@@ -143,8 +165,13 @@ export function App() {
     markRead(key)
   }, [markRead])
 
+  /**
+   * `silent` suppresses the failure toast. Background work (startup, the
+   * 30-minute timer) stays quiet so it never interrupts; anything the user
+   * pressed reports back. Resolves to whether the feed now has fresh data.
+   */
   const refreshFeed = useCallback(
-    async (url: string, silent = false) => {
+    async (url: string, silent = false): Promise<boolean> => {
       setUi((prev) => ({ ...prev, refreshing: { ...prev.refreshing, [url]: true } }))
       try {
         const incoming = await fetchFeed(url)
@@ -152,9 +179,20 @@ export function App() {
           const merged = mergeFeed(prev.feeds[url], incoming)
           return { ...prev, feeds: { ...prev.feeds, [url]: merged } }
         })
+        return true
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        showToast(`更新失败：${hostLabel(url)}（${message}）`)
+        // Keep the failure on the feed so the drawer can show it, instead of
+        // only flashing a toast that is gone three seconds later.
+        setState((prev) => {
+          const existing = prev.feeds[url]
+          const failed: FeedData = existing
+            ? { ...existing, error: message }
+            : { url, title: hostLabel(url), fetchedAt: Date.now(), error: message, items: [] }
+          return { ...prev, feeds: { ...prev.feeds, [url]: failed } }
+        })
+        if (!silent) showToast(`更新失败：${hostLabel(url)}（${message}）`)
+        return false
       } finally {
         setUi((prev) => {
           const refreshing = { ...prev.refreshing }
@@ -167,10 +205,13 @@ export function App() {
   )
 
   const refreshAll = useCallback(async () => {
-    setState((prev) => ({ ...prev }))
     const urls = state.subscriptions
-    await Promise.all(urls.map((url) => refreshFeed(url, true)))
-    if (urls.length > 0) showToast("刷新完成")
+    if (urls.length === 0) return
+    const results = await Promise.all(urls.map((url) => refreshFeed(url)))
+    const failed = results.filter((ok) => !ok).length
+    if (failed === 0) showToast(`刷新完成（${urls.length} 个来源）`)
+    else if (failed < urls.length) showToast(`${urls.length - failed} 个来源已更新，${failed} 个失败`)
+    // Everything failed: refreshFeed already surfaced each error.
   }, [state.subscriptions, refreshFeed, showToast])
 
   const addFeed = useCallback(
@@ -179,35 +220,35 @@ export function App() {
       if (!trimmed) return
       let url = trimmed
       if (!/^https?:\/\//i.test(url)) url = `https://${url}`
-      setUi((prev) => {
-        const next: UiState = { ...prev, dialog: null, selection: url, openKey: null }
-        if (!state.subscriptions.includes(url)) {
-          setState((s) => ({ ...s, subscriptions: [...s.subscriptions, url] }))
-        }
-        return next
-      })
-      setState((prev) => {
-        if (prev.subscriptions.includes(url)) return prev
-        return { ...prev, subscriptions: [...prev.subscriptions, url] }
-      })
-      showToast("正在添加订阅…")
-      await refreshFeed(url)
-      showToast(`已添加：${hostLabel(url)}`)
+      setUi((prev) => ({ ...prev, dialog: null, selection: url, openKey: null }))
+      setState((prev) => (
+        prev.subscriptions.includes(url)
+          ? prev
+          : { ...prev, subscriptions: [...prev.subscriptions, url] }
+      ))
+      const ok = await refreshFeed(url, true)
+      // Report the real outcome: the old code always claimed success, even when
+      // the feed could not be parsed. A failed add stays subscribed so the
+      // user can retry with the refresh button.
+      showToast(ok ? `已添加：${hostLabel(url)}` : `已添加，但暂时读不到内容：${hostLabel(url)}`)
     },
-    [refreshFeed, showToast, state.subscriptions],
+    [refreshFeed, showToast],
   )
 
   const removeFeed = useCallback(
     (url: string) => {
+      const prefix = `${url}\u0000`
       setState((prev) => {
         const feeds = { ...prev.feeds }
         delete feeds[url]
+        // The confirmation dialog promises the read and starred records go too,
+        // and leaving them behind grows the state file forever.
         return {
           ...prev,
           subscriptions: prev.subscriptions.filter((u) => u !== url),
           feeds,
-          read: prev.read,
-          starred: prev.starred,
+          read: prev.read.filter((key) => !key.startsWith(prefix)),
+          starred: prev.starred.filter((key) => !key.startsWith(prefix)),
         }
       })
       setUi((prev) => ({
@@ -238,23 +279,38 @@ export function App() {
     showToast("已全部标为已读")
   }, [shownEntries, showToast])
 
-  // Initial: refresh feeds that have no cached data yet
+  // Startup: refresh everything when the user asked for it, and otherwise just
+  // fill in feeds that have never been fetched. Reads the initial state, which
+  // is already the persisted one.
   useEffect(() => {
     for (const url of state.subscriptions) {
-      if (!state.feeds[url]) void refreshFeed(url, true)
+      if (state.settings.refreshOnStart || !state.feeds[url]) void refreshFeed(url, true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Auto refresh every 30 minutes
+  // Background refresh on the configured period; 0 turns it off.
   useEffect(() => {
+    const minutes = state.settings.autoRefreshMinutes
+    if (!minutes || minutes <= 0) return
     const timer = setInterval(() => {
-      const urls = state.subscriptions
-      for (const url of urls) void refreshFeed(url, true)
-    }, 30 * 60 * 1000)
+      for (const url of state.subscriptions) void refreshFeed(url, true)
+    }, minutes * 60 * 1000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.subscriptions])
+  }, [state.subscriptions, state.settings.autoRefreshMinutes])
+
+  // Escape closes whichever dialog is open. GPUIX key events do not bubble, so
+  // this is a window-level shortcut rather than a handler on the dialog.
+  const openDialog = ui.dialog
+  const dialogRef = useRef(openDialog)
+  dialogRef.current = openDialog
+  useEffect(() => onWindowKey((event) => {
+    if ((event.key ?? "").toLowerCase() !== "escape") return false
+    if (dialogRef.current === null) return false
+    setUi((prev) => ({ ...prev, dialog: null, pendingRemove: null }))
+    return true
+  }), [])
 
   const isSaving = Object.values(ui.refreshing).some(Boolean)
 
@@ -305,7 +361,7 @@ interface ShellProps {
   selectedFeedInfo: { title: string; subtitle: string }
   isSaving: boolean
   actions: {
-    refreshFeed: (url: string, silent?: boolean) => Promise<void>
+    refreshFeed: (url: string, silent?: boolean) => Promise<boolean>
     refreshAll: () => Promise<void>
     markAllReadVisible: () => void
     openArticle: (key: string) => void
@@ -317,12 +373,20 @@ interface ShellProps {
   }
 }
 
-function EmptyState({ icon }: { icon: MyIcon }) {
+function EmptyState({ icon, title, hint }: {
+  icon: { glyph: MyIcon } | { symbol: MaterialSymbol }
+  title: string
+  hint?: string
+}) {
   const theme = useMaterialTheme()
+  const color = theme.onSurfaceVariant
   return (
-    <div style={{ width: "100%", flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-      <GlyphIcon name={icon} color={theme.outline} size={40} />
-      <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodyMedium) }}>这里空空如也</text>
+    <div style={{ width: "100%", flexGrow: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24 }}>
+      {"glyph" in icon
+        ? <GlyphIcon name={icon.glyph} color={color} size={40} />
+        : <MaterialIcon name={icon.symbol} color={color} size={40} />}
+      <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.titleMedium), textAlign: "center" }}>{title}</text>
+      {hint ? <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodyMedium), textAlign: "center", lineClamp: 3 }}>{hint}</text> : null}
     </div>
   )
 }
@@ -333,14 +397,18 @@ function Shell(props: ShellProps) {
 
   const select = (key: SelectionKey) => setUi((prev) => ({ ...prev, selection: key, openKey: null }))
 
-  const sortedFeeds = state.subscriptions.map((url) => state.feeds[url]).filter((f): f is FeedData => Boolean(f))
-  const feedRows = state.subscriptions.map((url, index) => {
+  // A fixed 360px list column squeezed the reader to roughly 250px at the
+  // 900px minimum window, so the split follows the window instead.
+  const windowSize = useResponsiveWindowSize()
+  const listWidth = Math.max(260, Math.min(360, Math.round(windowSize.width * 0.3)))
+
+  const feedRows = state.subscriptions.map((url) => {
     const feed = state.feeds[url]
     const title = feed?.title ?? hostLabel(url)
     const unread = props.unreadByFeed[url] ?? 0
     return (
       <div key={url} style={{ width: "100%" }}>
-        <FeedRow title={title} active={ui.selection === url} unread={unread} onClick={() => select(url)} />
+        <FeedRow title={title} active={ui.selection === url} unread={unread} error={feed?.error} onClick={() => select(url)} />
       </div>
     )
   })
@@ -353,7 +421,7 @@ function Shell(props: ShellProps) {
           actions={
             <>
               <TopGlyphButton icon="add" label="添加订阅" onClick={() => setUi((prev) => ({ ...prev, dialog: "add" }))} />
-              <IconButton icon="refresh" onClick={() => void actions.refreshAll()} disabled={props.isSaving} />
+              <IconButton icon="refresh" label="刷新全部" onClick={() => void actions.refreshAll()} disabled={props.isSaving} />
               <TopGlyphButton icon="settings" label="设置" onClick={() => setUi((prev) => ({ ...prev, dialog: "settings" }))} />
             </>
           }
@@ -382,7 +450,7 @@ function Shell(props: ShellProps) {
       <NavigationDrawer
         header={
           <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
-            <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.titleMedium), fontWeight: 700 }}>订阅</text>
+            <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.titleSmall) }}>订阅</text>
             <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall) }}>{`${state.subscriptions.length} 个来源 · ${props.totalUnread} 篇未读`}</text>
           </div>
         }
@@ -407,23 +475,43 @@ function Shell(props: ShellProps) {
 
       {/* Right column: article list + reader */}
       <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "row" }}>
-        <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", backgroundColor: theme.surfaceContainerLow, borderRightWidth: 1, borderRightColor: theme.outlineVariant }}>
+        <div style={{ width: listWidth, flexShrink: 0, display: "flex", flexDirection: "column", backgroundColor: theme.surfaceContainerLow }}>
           <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12, padding: 16 }}>
             <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <text style={{ flexGrow: 1, color: theme.onSurface, ...fontOf(theme.typescale.titleMedium), fontWeight: 600, overflow: "hidden" }}>{props.selectedFeedInfo.title}</text>
+              <text style={{ flexGrow: 1, minWidth: 0, color: theme.onSurface, overflow: "hidden", lineClamp: 1, ...fontOf(theme.typescale.titleMedium) }}>{props.selectedFeedInfo.title}</text>
               {props.shownEntries.length > 0 ? (
-                <div onClick={actions.markAllReadVisible} style={{ display: "flex", alignItems: "center", gap: 4, borderRadius: theme.shape.full, paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, cursor: "pointer", hover: { backgroundColor: `${theme.onSurface}14` } }}>
-                  <MaterialIcon name="check" color={theme.primary} size={16} />
-                  <text style={{ color: theme.primary, ...fontOf(theme.typescale.labelMedium) }}>全部已读</text>
-                </div>
+                <Button variant="text" icon="check" onClick={actions.markAllReadVisible}>全部已读</Button>
               ) : null}
             </div>
-            <FilledTextField value={ui.search} onChange={(v) => setUi((prev) => ({ ...prev, search: v }))} placeholder="搜索文章" />
-            <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall) }}>{`${props.shownEntries.length} 篇`}</text>
+            <FilledTextField label="搜索" value={ui.search} onChange={(v) => setUi((prev) => ({ ...prev, search: v }))} placeholder="按标题或摘要筛选" />
+            <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <FilterChip
+                label="只看未读"
+                selected={ui.unreadOnly}
+                onClick={() => setUi((prev) => ({ ...prev, unreadOnly: !prev.unreadOnly }))}
+              />
+              <text style={{ flexGrow: 1, textAlign: "right", color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall) }}>{`${props.shownEntries.length} 篇`}</text>
+            </div>
           </div>
           <div style={{ width: "100%", flexGrow: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             {props.shownEntries.length === 0 ? (
-              <EmptyState icon="rss" />
+              ui.search.trim() ? (
+                <EmptyState
+                  icon={{ symbol: "search" }}
+                  title="没有匹配的文章"
+                  hint={`“${ui.search.trim()}”在「${props.selectedFeedInfo.title}」里没有结果`}
+                />
+              ) : ui.unreadOnly ? (
+                <EmptyState
+                  icon={{ glyph: "done_all" }}
+                  title="没有未读文章"
+                  hint={`「${props.selectedFeedInfo.title}」已经全部读完，关掉「只看未读」可以回看历史`}
+                />
+              ) : state.subscriptions.length === 0 ? (
+                <EmptyState icon={{ glyph: "rss" }} title="还没有订阅" hint="点右上角「添加订阅」，粘贴 RSS、Atom 或 JSON Feed 地址" />
+              ) : (
+                <EmptyState icon={{ glyph: "rss" }} title="这里还没有文章" hint="点右上角的刷新按钮拉取最新内容" />
+              )
             ) : (
               <virtual-list alignment="top" estimatedItemHeight={84} overdraw={480} style={{ width: "100%", flexGrow: 1, minHeight: 0 }}>
                 {props.shownEntries.map((entry) => (
@@ -460,9 +548,10 @@ function Shell(props: ShellProps) {
 // ─── Small building blocks ────────────────────────────────────────────────────
 
 function Pill({ text, color, bg }: { text: string; color: string; bg: string }) {
+  const theme = useMaterialTheme()
   return (
-    <div style={{ minWidth: 22, height: 20, display: "flex", alignItems: "center", justifyContent: "center", paddingLeft: 7, paddingRight: 7, borderRadius: 10, backgroundColor: bg }}>
-      <text style={{ color, ...fontOf({ size: 11, weight: 700, lineHeight: 16 }) }}>{text}</text>
+    <div style={{ minWidth: 22, height: 20, display: "flex", alignItems: "center", justifyContent: "center", paddingLeft: 7, paddingRight: 7, borderRadius: theme.shape.full, backgroundColor: bg }}>
+      <text style={{ color, ...fontOf(theme.typescale.labelSmall) }}>{text}</text>
     </div>
   )
 }
@@ -476,63 +565,96 @@ function QuickRow({ label, count, active, onClick, icon }: {
 }) {
   const theme = useMaterialTheme()
   const fg = active ? theme.onSecondaryContainer : theme.onSurfaceVariant
+  const ripple = useRipple({ color: fg, radius: theme.shape.full })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
+      onMouseDown={ripple.onMouseDown}
+      role="button"
+      aria-label={`${label}, ${count} unread`}
+      aria-selected={active === true}
       style={{
         width: "100%", minHeight: 46, display: "flex", flexDirection: "row", alignItems: "center",
         gap: 12, paddingLeft: 12, paddingRight: 12, borderRadius: theme.shape.full,
         backgroundColor: active ? theme.secondaryContainer : "transparent",
         cursor: "pointer",
-        hover: { backgroundColor: active ? theme.secondaryContainer : `${fg}14` },
+        position: "relative",
+        overflow: "hidden",
+        hover: { backgroundColor: active ? theme.secondaryContainer : overlay(fg, stateLayer.hover) },
       }}
     >
+      {ripple.layer}
       {icon(fg)}
-      <text style={{ flexGrow: 1, minWidth: 0, color: fg, ...fontOf(theme.typescale.labelLarge) }}>{label}</text>
-      {count > 0 ? <Pill text={String(count)} color={fg} bg={active ? `${theme.onSecondaryContainer}22` : `${fg}1f`} /> : null}
+      <text style={{ flexGrow: 1, minWidth: 0, color: fg, ...fontOf(theme.typescale.labelLarge), lineClamp: 1, overflow: "hidden" }}>{label}</text>
+      {count > 0 ? <Pill text={String(count)} color={fg} bg={active ? overlay(theme.onSecondaryContainer, stateLayer.press) : overlay(fg, stateLayer.press)} /> : null}
     </div>
   )
 }
 
 function TopGlyphButton({ icon, label, onClick }: { icon: MyIcon; label?: string; onClick?: () => void }) {
   const theme = useMaterialTheme()
+  const ripple = useRipple({ color: theme.onSurfaceVariant, radius: theme.shape.full })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
+      onMouseDown={ripple.onMouseDown}
+      role="button"
+      aria-label={label ?? icon}
       style={{
         height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: theme.shape.full,
         cursor: "pointer", paddingLeft: 8, paddingRight: 8,
-        hover: { backgroundColor: `${theme.onSurface}14` },
+        position: "relative", overflow: "hidden",
+        hover: { backgroundColor: overlay(theme.onSurface, stateLayer.hover) },
       }}
     >
+      {ripple.layer}
       <GlyphIcon name={icon} color={theme.onSurfaceVariant} size={20} />
-      {label ? <text style={{ marginLeft: 6, color: theme.onSurfaceVariant, ...fontOf(theme.typescale.labelLarge) }}>{label}</text> : null}
+      {label ? <text style={{ marginLeft: 6, color: theme.onSurfaceVariant, ...fontOf(theme.typescale.labelLarge), lineClamp: 1 }}>{label}</text> : null}
     </div>
   )
 }
 
-function FeedRow({ title, active, unread, onClick }: {
+function FeedRow({ title, active, unread, error, onClick }: {
   title: string
   active?: boolean
   unread: number
+  /** Last refresh failure. A feed that cannot be read is shown as broken
+   *  rather than as an ordinary empty source. */
+  error?: string
   onClick?: () => void
 }) {
   const theme = useMaterialTheme()
+  const iconColor = active ? theme.onSecondaryContainer : error ? theme.error : theme.onSurfaceVariant
+  const ripple = useRipple({ color: iconColor, radius: theme.shape.full })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
+      onMouseDown={ripple.onMouseDown}
+      role="button"
+      aria-label={`${title}${unread > 0 ? `, ${unread} 篇未读` : ""}${error ? `, 更新失败：${error}` : ""}`}
+      aria-selected={active === true}
       style={{
         width: "100%", minHeight: 44, display: "flex", flexDirection: "row", alignItems: "center", gap: 10,
-        paddingLeft: 8, paddingRight: 8, borderRadius: theme.shape.medium, cursor: "pointer",
+        paddingLeft: 8, paddingRight: 8, borderRadius: theme.shape.full, cursor: "pointer",
         backgroundColor: active ? theme.secondaryContainer : "transparent",
-        hover: { backgroundColor: active ? theme.secondaryContainer : `${theme.onSurface}0f` },
+        position: "relative", overflow: "hidden",
+        hover: { backgroundColor: active ? theme.secondaryContainer : overlay(theme.onSurface, stateLayer.hover) },
       }}
     >
-      <div style={{ width: 28, height: 28, borderRadius: theme.shape.small, backgroundColor: active ? theme.primaryContainer : theme.surfaceContainerHighest, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <GlyphIcon name="rss" color={active ? theme.onPrimaryContainer : theme.onSurfaceVariant} size={16} />
+      {ripple.layer}
+      {/* The row already carries the selection colour, so the leading chip stays
+          neutral instead of stacking a second container role inside it. */}
+      <div style={{ width: 28, height: 28, borderRadius: theme.shape.full, backgroundColor: active ? "transparent" : error ? overlay(theme.error, stateLayer.press) : theme.surfaceContainerHighest, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <GlyphIcon name="rss" color={iconColor} size={16} />
       </div>
-      <text style={{ flexGrow: 1, minWidth: 0, color: active ? theme.onSecondaryContainer : theme.onSurface, overflow: "hidden", ...fontOf(theme.typescale.bodyMedium) }}>{title}</text>
-      {unread > 0 ? <Pill text={unread > 99 ? "99+" : String(unread)} color={active ? theme.onSecondaryContainer : theme.onSurfaceVariant} bg={active ? `${theme.onSecondaryContainer}22` : `${theme.onSurface}1a`} /> : null}
+      <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
+        <text style={{ color: active ? theme.onSecondaryContainer : theme.onSurface, overflow: "hidden", lineClamp: 1, ...fontOf(theme.typescale.bodyMedium) }}>{title}</text>
+        {error ? <text style={{ color: theme.error, overflow: "hidden", lineClamp: 1, ...fontOf(theme.typescale.labelSmall) }}>{error}</text> : null}
+      </div>
+      {unread > 0 ? <Pill text={unread > 99 ? "99+" : String(unread)} color={active ? theme.onSecondaryContainer : theme.onSurfaceVariant} bg={active ? overlay(theme.onSecondaryContainer, stateLayer.press) : overlay(theme.onSurface, stateLayer.press)} /> : null}
     </div>
   )
 }
@@ -548,26 +670,34 @@ function ArticleRow({ title, summary, feedTitle, time, unread, starred, active, 
   onClick?: () => void
 }) {
   const theme = useMaterialTheme()
+  const ripple = useRipple({ color: active ? theme.onSecondaryContainer : theme.onSurface, radius: theme.shape.medium })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
+      onMouseDown={ripple.onMouseDown}
+      role="button"
+      aria-label={unread ? `${title}, unread` : title}
+      aria-selected={active === true}
       style={{
         width: "100%", display: "flex", flexDirection: "row", gap: 10, padding: 12, paddingLeft: 16,
         borderRadius: theme.shape.medium, cursor: "pointer",
         backgroundColor: active ? theme.secondaryContainer : "transparent",
-        hover: { backgroundColor: active ? theme.secondaryContainer : `${theme.onSurface}14` },
+        position: "relative", overflow: "hidden",
+        hover: { backgroundColor: active ? theme.secondaryContainer : overlay(theme.onSurface, stateLayer.hover) },
       }}
     >
-      <div style={{ width: 3, borderRadius: theme.shape.small, backgroundColor: unread ? theme.primary : "transparent", flexShrink: 0 }} />
+      {ripple.layer}
+      <div style={{ width: 3, borderRadius: theme.shape.full, backgroundColor: unread ? theme.primary : "transparent", flexShrink: 0 }} />
       <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
         <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <text style={{ flexGrow: 1, minWidth: 0, color: active ? theme.onSecondaryContainer : unread ? theme.onSurface : theme.onSurfaceVariant, overflow: "hidden", ...fontOf(theme.typescale.titleSmall), fontWeight: unread ? 600 : 400 }}>{title}</text>
-          {starred ? <MaterialIcon name="favorite" color={theme.primary} size={16} /> : null}
+          <text style={{ flexGrow: 1, minWidth: 0, color: active ? theme.onSecondaryContainer : unread ? theme.onSurface : theme.onSurfaceVariant, overflow: "hidden", lineClamp: 1, ...fontOf(theme.typescale.titleSmall), fontWeight: unread ? 500 : 400 }}>{title}</text>
+          {starred ? <MaterialIcon name="favorite" color={active ? theme.onSecondaryContainer : theme.primary} size={16} /> : null}
         </div>
         {summary ? (
-          <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall), lineClamp: 2, overflow: "hidden" }}>{summary}</text>
+          <text style={{ color: active ? theme.onSecondaryContainer : theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall), lineClamp: 2, overflow: "hidden" }}>{summary}</text>
         ) : null}
-        <text style={{ color: theme.outline, ...fontOf(theme.typescale.labelSmall) }}>{`${feedTitle} · ${formatRelative(time)}`}</text>
+        <text style={{ color: active ? theme.onSecondaryContainer : theme.onSurfaceVariant, ...fontOf(theme.typescale.labelSmall), lineClamp: 1, overflow: "hidden" }}>{`${feedTitle} · ${formatRelative(time)}`}</text>
       </div>
     </div>
   )
@@ -583,30 +713,40 @@ function ReaderPane({ entry, readSet, starSet, onStar, onMarkUnread }: {
   onMarkUnread: () => void
 }) {
   const theme = useMaterialTheme()
-  const [images, setImages] = useState<Array<{ src: string; alt: string }>>([])
+  const [imageMap, setImageMap] = useState<Record<string, string>>({})
+  const [imagesReady, setImagesReady] = useState(false)
+
+  const source = entry ? entry.item.content || entry.item.summary || "" : ""
+  // Pictures are split out in document order so each one stays where the author
+  // put it instead of being dumped after the text.
+  const blocks = useMemo(() => splitHtmlImages(source, 12), [source])
+  const lead = entry?.item.image && /^https?:\/\//i.test(entry.item.image) ? entry.item.image : undefined
 
   useEffect(() => {
-    setImages([])
-    const key = entry?.key
-    if (!key) return
+    setImageMap({})
+    setImagesReady(false)
+    const inline = blocks.filter((block) => block.kind === "image").map((block) => block.url)
+    const urls = lead && !inline.includes(lead) ? [lead, ...inline] : inline
+    if (!entry || urls.length === 0) {
+      setImagesReady(true)
+      return
+    }
     let cancelled = false
-    const raw = (entry.item.content || entry.item.summary || "").toString()
-    const urls = extractImageUrls(raw)
-    if (entry.item.image && !urls.includes(entry.item.image)) urls.unshift(entry.item.image)
-    cacheRemoteImages(urls.slice(0, 12)).then((map) => {
+    void cacheRemoteImages(urls.slice(0, 12)).then((map) => {
       if (cancelled) return
-      setImages(urls.filter((url) => map[url]).map((url) => ({ src: map[url] as string, alt: "" })))
+      setImageMap(map)
+      setImagesReady(true)
     })
     return () => {
       cancelled = true
     }
-  }, [entry?.key])
+  }, [entry?.key, blocks, lead])
 
   if (!entry) {
     return (
       <div style={{ flexGrow: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: theme.surface }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-          <GlyphIcon name="rss" color={theme.outline} size={44} />
+          <GlyphIcon name="rss" color={theme.onSurfaceVariant} size={44} />
           <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodyLarge) }}>选择一篇文章开始阅读</text>
         </div>
       </div>
@@ -615,15 +755,16 @@ function ReaderPane({ entry, readSet, starSet, onStar, onMarkUnread }: {
 
   const { item } = entry
   const starred = starSet.has(entry.key)
-  const source = item.content || item.summary || "（该文章没有可显示的正文）"
+  const leadSrc = lead ? imageMap[lead] : undefined
+  const hasBody = blocks.some((block) => block.kind === "text") || blocks.some((block) => block.kind === "image")
 
   return (
     <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", backgroundColor: theme.surface }}>
       <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 20, paddingBottom: 0 }}>
-        <text style={{ flexGrow: 1, minWidth: 0, color: theme.onSurface, overflow: "hidden", ...fontOf(theme.typescale.headlineSmall) }}>{item.title}</text>
+        <text style={{ flexGrow: 1, minWidth: 0, color: theme.onSurface, overflow: "hidden", lineClamp: 3, ...fontOf(theme.typescale.headlineSmall) }}>{item.title}</text>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 4 }}>
           <StarButton starred={starred} onClick={onStar} />
-          {item.link ? <IconButton icon="open_in_new" onClick={() => openInBrowser(item.link!)} /> : null}
+          {item.link ? <IconButton icon="open_in_new" label="在浏览器中打开" onClick={() => openInBrowser(item.link!)} /> : null}
         </div>
       </div>
 
@@ -634,24 +775,36 @@ function ReaderPane({ entry, readSet, starSet, onStar, onMarkUnread }: {
       </div>
 
       <div style={{ flexGrow: 1, minHeight: 0, overflowY: "scroll", backgroundColor: theme.surface, padding: 20, paddingTop: 8 }}>
-        {images.slice(0, 1).map((image) => (
-          <div key={image.src} style={{ width: "100%", marginBottom: 16 }}>
-            <img src={image.src} alt={image.alt} objectFit="contain" style={{ width: "100%", height: 320, borderRadius: theme.shape.large }} />
-          </div>
-        ))}
-        <RichText source={source} theme={theme} mode={theme.mode} />
-        {images.length > 1 ? (
-          <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
-            {images.slice(1).map((image) => (
-              <img key={image.src} src={image.src} alt={image.alt} objectFit="contain" style={{ width: "100%", height: 220, borderRadius: theme.shape.large }} />
-            ))}
+        {leadSrc ? (
+          <div style={{ width: "100%", marginBottom: 16 }}>
+            {/* The enclosure image is a banner, so it fills its frame rather than
+                letterboxing a portrait photo into a fixed box. */}
+            <img src={leadSrc} alt="" objectFit="cover" style={{ width: "100%", height: 320, borderRadius: theme.shape.large }} />
           </div>
         ) : null}
+
+        {!hasBody ? (
+          <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodyMedium) }}>（该文章没有可显示的正文）</text>
+        ) : null}
+
+        {blocks.map((block, index) => block.kind === "text" ? (
+          <RichMarkdown key={index} markdown={block.markdown} theme={theme} mode={theme.mode} />
+        ) : imageMap[block.url] ? (
+          <div key={index} style={{ width: "100%", marginTop: 12, marginBottom: 12 }}>
+            {/* Inline figures are never cropped — a cut-off diagram is worse
+                than a little letterboxing. */}
+            <img src={imageMap[block.url] as string} alt={block.alt} objectFit="contain" style={{ width: "100%", height: 260, borderRadius: theme.shape.large }} />
+          </div>
+        ) : imagesReady ? null : (
+          // Reserve the box while the download is in flight so the article does
+          // not jump under the reader when the picture lands.
+          <div key={index} style={{ width: "100%", height: 260, marginTop: 12, marginBottom: 12, borderRadius: theme.shape.large, backgroundColor: theme.surfaceContainerHighest }} />
+        ))}
       </div>
 
-      {!readSet.has(entry.key) ? (
+      {readSet.has(entry.key) ? (
         <div style={{ width: "100%", padding: 8, paddingLeft: 20, paddingRight: 20 }}>
-          <Button variant="text" icon="check" onClick={onMarkUnread}>标为未读</Button>
+          <Button variant="text" onClick={onMarkUnread}>标为未读</Button>
         </div>
       ) : null}
     </div>
@@ -661,11 +814,18 @@ function ReaderPane({ entry, readSet, starSet, onStar, onMarkUnread }: {
 function StarButton({ starred, onClick }: { starred: boolean; onClick: () => void }) {
   const theme = useMaterialTheme()
   const color = starred ? theme.primary : theme.onSurfaceVariant
+  const ripple = useRipple({ color: theme.primary, radius: theme.shape.full })
   return (
     <div
+      ref={ripple.ref}
       onClick={onClick}
-      style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: theme.shape.full, cursor: "pointer", hover: { backgroundColor: `${theme.onSurface}14` } }}
+      onMouseDown={ripple.onMouseDown}
+      role="button"
+      aria-label={starred ? "Remove star" : "Star this article"}
+      aria-selected={starred}
+      style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: theme.shape.full, cursor: "pointer", position: "relative", overflow: "hidden", hover: { backgroundColor: overlay(theme.onSurface, stateLayer.hover) } }}
     >
+      {ripple.layer}
       {starred ? (
         <MaterialIcon name="favorite" color={color} size={22} />
       ) : (
@@ -677,29 +837,69 @@ function StarButton({ starred, onClick }: { starred: boolean; onClick: () => voi
 
 // ─── Modal base + dialogs ─────────────────────────────────────────────────────
 
-function Modal({ open, title, width = 440, children, footer }: {
+function Modal({ open, title, width = 440, onDismiss, children, footer }: {
   open: boolean
   title: string
   width?: number
+  /** Called when the user dismisses the dialog by clicking the scrim. */
+  onDismiss?: () => void
   children: React.ReactNode
   footer?: React.ReactNode
 }) {
   const theme = useMaterialTheme()
-  if (!open) return null
+  // `scrimOverlay` is the M3 scrim at 32%; the raw `scrim` role is opaque and
+  // blacked the whole window out behind every dialog.
   return (
-    <div style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: theme.scrim, pointerEvents: "auto" }}>
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2, ease: MOTION_EASE }} style={{ width, maxWidth: "95%", padding: 24, borderRadius: theme.shape.extraLarge, backgroundColor: theme.surfaceContainerHigh, display: "flex", flexDirection: "column" }}>
-        <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.headlineSmall) }}>{title}</text>
-        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 16 }}>{children}</div>
-        {footer ? (
-          <div style={{ marginTop: 24, display: "flex", flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>{footer}</div>
-        ) : null}
-      </motion.div>
-    </div>
+    <AnimatePresence>
+      {open ? (
+        <PresenceMotion
+          key="modal-scrim"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          enterDuration={.2}
+          exitDuration={.16}
+          style={{ position: "absolute", left: 0, top: 0, width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: theme.scrimOverlay, pointerEvents: "auto" }}
+        >
+          <PresenceMotion
+            {...a11y({ role: "dialog" }, title)}
+            onMouseDownOutside={onDismiss}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            enterDuration={.2}
+            exitDuration={.16}
+            style={{ width, maxWidth: "95%", padding: 24, borderRadius: theme.shape.extraLarge, backgroundColor: theme.surfaceContainerHigh, display: "flex", flexDirection: "column" }}
+          >
+            <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.headlineSmall), lineClamp: 2 }}>{title}</text>
+            <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 16 }}>{children}</div>
+            {footer ? (
+              <div style={{ marginTop: 24, display: "flex", flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>{footer}</div>
+            ) : null}
+          </PresenceMotion>
+        </PresenceMotion>
+      ) : null}
+    </AnimatePresence>
   )
 }
 
 const ACCENT_PRESETS = ["#006a6a", "#6750a4", "#e53935", "#1e88e5", "#43a047", "#fb8c00", "#d81b60", "#000000"]
+
+function ColorSwatch({ color, selected, onSelect }: { color: string; selected: boolean; onSelect: () => void }) {
+  const theme = useMaterialTheme()
+  const ripple = useRipple({ color: theme.onSurface, radius: theme.shape.full })
+  return (
+    <div
+      ref={ripple.ref}
+      onClick={onSelect}
+      onMouseDown={ripple.onMouseDown}
+      {...a11y({ role: "radio", ariaLabel: color, ariaSelected: selected })}
+      style={{ width: 32, height: 32, borderRadius: theme.shape.full, backgroundColor: color, cursor: "pointer", position: "relative", overflow: "hidden", borderWidth: selected ? 3 : 1, borderColor: selected ? theme.onSurface : theme.outlineVariant }}
+    >
+      {ripple.layer}
+    </div>
+  )
+}
 
 function AddFeedDialog({ open, onClose, onSubmit }: {
   open: boolean
@@ -720,6 +920,7 @@ function AddFeedDialog({ open, onClose, onSubmit }: {
       open={open}
       title="添加订阅"
       width={460}
+      onDismiss={onClose}
       footer={
         <>
           <Button variant="text" onClick={onClose}>取消</Button>
@@ -746,14 +947,12 @@ function SettingsDialog({ open, onClose, state, setState, onRemoveFeed }: {
     if (open) setAccent(state.settings.accentColor ?? "")
   }, [open])
 
+  const accentInput = accent.trim()
+  const accentInvalid = accentInput.length > 0 && !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(accentInput)
+
   const applyAccent = () => {
-    const hex = accent.trim()
-    if (!hex) {
-      setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: undefined } }))
-      return
-    }
-    if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex)) return
-    setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: hex } }))
+    if (accentInvalid) return
+    setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: accentInput || undefined } }))
   }
 
   return (
@@ -761,21 +960,47 @@ function SettingsDialog({ open, onClose, state, setState, onRemoveFeed }: {
       open={open}
       title="设置"
       width={520}
+      onDismiss={onClose}
       footer={<Button variant="text" onClick={onClose}>完成</Button>}
     >
       <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 12 }}>
         <text style={{ flexGrow: 1, color: theme.onSurface, ...fontOf(theme.typescale.bodyLarge) }}>深色模式</text>
-        <Switch checked={state.settings.mode === "dark"} onChange={(v) => setState((prev) => ({ ...prev, settings: { ...prev.settings, mode: v ? "dark" : "light" } }))} />
+        <Switch checked={state.settings.mode === "dark"} ariaLabel="深色模式" onChange={(v) => setState((prev) => ({ ...prev, settings: { ...prev.settings, mode: v ? "dark" : "light" } }))} />
+      </div>
+
+      <div style={{ width: "100%", display: "flex", flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <div style={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+          <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.bodyLarge) }}>启动时自动更新</text>
+          <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall) }}>打开应用后立刻拉取所有订阅</text>
+        </div>
+        <Switch
+          checked={state.settings.refreshOnStart}
+          ariaLabel="启动时自动更新"
+          onChange={(v) => setState((prev) => ({ ...prev, settings: { ...prev.settings, refreshOnStart: v } }))}
+        />
+      </div>
+
+      <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.bodyLarge) }}>后台自动更新</text>
+          <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall) }}>应用运行期间按间隔刷新，失败不会打扰你</text>
+        </div>
+        <SegmentedButton
+          items={AUTO_REFRESH_CHOICES.map((minutes) => ({ label: minutes === 0 ? "关闭" : `${minutes} 分钟` }))}
+          selectedIndex={Math.max(0, (AUTO_REFRESH_CHOICES as readonly number[]).indexOf(state.settings.autoRefreshMinutes))}
+          onSelectionChange={(index) => setState((prev) => ({ ...prev, settings: { ...prev.settings, autoRefreshMinutes: AUTO_REFRESH_CHOICES[index] ?? DEFAULT_SETTINGS.autoRefreshMinutes } }))}
+        />
       </div>
 
       <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
         <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.bodyLarge) }}>强调色</text>
         <div style={{ width: "100%", display: "flex", flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           {ACCENT_PRESETS.map((color) => (
-            <div
+            <ColorSwatch
               key={color}
-              onClick={() => setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: color } }))}
-              style={{ width: 32, height: 32, borderRadius: theme.shape.full, backgroundColor: color, cursor: "pointer", borderWidth: color === state.settings.accentColor ? 3 : 1, borderColor: color === state.settings.accentColor ? theme.onSurface : theme.outlineVariant }}
+              color={color}
+              selected={color === state.settings.accentColor}
+              onSelect={() => setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: color } }))}
             />
           ))}
         </div>
@@ -783,14 +1008,17 @@ function SettingsDialog({ open, onClose, state, setState, onRemoveFeed }: {
           <div style={{ flexGrow: 1 }}>
             <FilledTextField label="自定义颜色" value={accent} placeholder="#6750a4" onChange={setAccent} />
           </div>
-          <Button variant="tonal" onClick={applyAccent}>应用</Button>
+          <Button variant="tonal" disabled={accentInvalid} onClick={applyAccent}>应用</Button>
           <Button variant="text" onClick={() => { setAccent(""); setState((prev) => ({ ...prev, settings: { ...prev.settings, accentColor: undefined } })) }}>重置</Button>
         </div>
+        {accentInvalid ? (
+          <text style={{ color: theme.error, ...fontOf(theme.typescale.bodySmall) }}>请输入 #RGB 或 #RRGGBB 形式的颜色</text>
+        ) : null}
       </div>
 
       <Divider />
       <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 4 }}>
-        <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.titleMedium) }}>管理订阅</text>
+        <text style={{ color: theme.onSurface, ...fontOf(theme.typescale.titleSmall) }}>管理订阅</text>
         <div style={{ width: "100%", display: "flex", flexDirection: "column", maxHeight: 240, overflowY: "scroll", gap: 4 }}>
           {state.subscriptions.length === 0 ? (
             <text style={{ color: theme.onSurfaceVariant, ...fontOf(theme.typescale.bodySmall), paddingTop: 4 }}>还没有订阅。</text>
@@ -828,6 +1056,7 @@ function RemoveFeedDialog({ open, feedUrl, onClose, onConfirm }: {
       open={open}
       title="删除订阅"
       width={420}
+      onDismiss={onClose}
       footer={
         <>
           <Button variant="text" onClick={onClose}>取消</Button>

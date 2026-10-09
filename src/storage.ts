@@ -10,6 +10,10 @@ import type { FeedData } from "./feeds.js"
 export interface AppSettings {
   mode: AppearanceMode
   accentColor?: string
+  /** Refresh every subscription once when the app starts. Default true. */
+  refreshOnStart: boolean
+  /** Background refresh period in minutes. `0` disables it. Default 30. */
+  autoRefreshMinutes: number
 }
 
 export interface StoredState {
@@ -21,7 +25,10 @@ export interface StoredState {
   settings: AppSettings
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { mode: "dark" }
+/** Background refresh choices offered in Settings, in minutes (0 = off). */
+export const AUTO_REFRESH_CHOICES = [0, 15, 30, 60] as const
+
+export const DEFAULT_SETTINGS: AppSettings = { mode: "dark", refreshOnStart: true, autoRefreshMinutes: 30 }
 
 export function emptyState(): StoredState {
   return {
@@ -55,6 +62,11 @@ export function loadState(): StoredState {
       settings: {
         mode: settings.mode === "light" ? "light" : "dark",
         accentColor: typeof settings.accentColor === "string" ? settings.accentColor : undefined,
+        // State files written before these existed fall back to the defaults.
+        refreshOnStart: settings.refreshOnStart !== false,
+        autoRefreshMinutes: Number.isFinite(settings.autoRefreshMinutes) && (settings.autoRefreshMinutes as number) >= 0
+          ? (settings.autoRefreshMinutes as number)
+          : DEFAULT_SETTINGS.autoRefreshMinutes,
       },
     }
   } catch (error) {
