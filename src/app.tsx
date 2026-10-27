@@ -571,6 +571,8 @@ function QuickRow({ label, count, active, onClick, icon }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       role="button"
       aria-label={`${label}, ${count} unread`}
       aria-selected={active === true}
@@ -600,6 +602,8 @@ function TopGlyphButton({ icon, label, onClick }: { icon: MyIcon; label?: string
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       role="button"
       aria-label={label ?? icon}
       style={{
@@ -633,6 +637,8 @@ function FeedRow({ title, active, unread, error, onClick }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       role="button"
       aria-label={`${title}${unread > 0 ? `, ${unread} 篇未读` : ""}${error ? `, 更新失败：${error}` : ""}`}
       aria-selected={active === true}
@@ -676,6 +682,8 @@ function ArticleRow({ title, summary, feedTitle, time, unread, starred, active, 
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       role="button"
       aria-label={unread ? `${title}, unread` : title}
       aria-selected={active === true}
@@ -820,6 +828,8 @@ function StarButton({ starred, onClick }: { starred: boolean; onClick: () => voi
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       role="button"
       aria-label={starred ? "Remove star" : "Star this article"}
       aria-selected={starred}
@@ -893,6 +903,8 @@ function ColorSwatch({ color, selected, onSelect }: { color: string; selected: b
       ref={ripple.ref}
       onClick={onSelect}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       {...a11y({ role: "radio", ariaLabel: color, ariaSelected: selected })}
       style={{ width: 32, height: 32, borderRadius: theme.shape.full, backgroundColor: color, cursor: "pointer", position: "relative", overflow: "hidden", borderWidth: selected ? 3 : 1, borderColor: selected ? theme.onSurface : theme.outlineVariant }}
     >

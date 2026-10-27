@@ -36,9 +36,9 @@ export function Button({ children, onClick, disabled, variant = "filled", minWid
       ref={ripple.ref}
       onClick={disabled ? undefined : onClick}
       onMouseDown={disabled ? undefined : (event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={disabled ? undefined : () => setPressed(false)}
+      onMouseUp={disabled ? undefined : () => { setPressed(false); ripple.onMouseUp() }}
       onMouseEnter={disabled ? undefined : () => setHovered(true)}
-      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false) }}
+      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       initial={false}
       animate={{
         opacity: pressed ? .86 : hovered ? .98 : 1,
@@ -78,9 +78,9 @@ export function FAB({ icon, label, onClick, ...rest }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       initial={false}
       animate={{ opacity: pressed ? .84 : hovered ? .96 : 1, left: pressed ? -2 : 0, borderRadius: pressed ? theme.shape.medium : theme.shape.large }}
       transition={{ duration: pressed ? .12 : .28, ease: pressed ? MOTION_EXIT : MOTION_ENTER }}
@@ -133,9 +133,9 @@ export function IconButton({ icon, onClick, disabled, variant = "standard", sele
       ref={ripple.ref}
       onClick={disabled ? undefined : onClick}
       onMouseEnter={disabled ? undefined : () => setHovered(true)}
-      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false) }}
+      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={disabled ? undefined : (event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={disabled ? undefined : () => setPressed(false)}
+      onMouseUp={disabled ? undefined : () => { setPressed(false); ripple.onMouseUp() }}
       initial={false}
       animate={{ opacity: pressed ? .82 : hovered ? .94 : 1, borderRadius: pressed ? theme.shape.small : theme.shape.full }}
       transition={{ duration: pressed ? .12 : .24, ease: pressed ? MOTION_EXIT : MOTION_ENTER }}
@@ -174,6 +174,8 @@ export function AssistChip({ label, onClick, selected, icon, ...rest }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseDown={ripple.onMouseDown}
+      onMouseUp={ripple.onMouseUp}
+      onMouseLeave={ripple.onMouseLeave}
       style={{
         display: "flex",
         alignItems: "center",
@@ -216,9 +218,9 @@ export function FilterChip({ label, selected, onClick, icon, ...rest }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={onClick ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false) } : undefined}
+      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false); ripple.onMouseLeave() } : undefined}
       onMouseDown={onClick ? (event) => { setPressed(true); ripple.onMouseDown(event) } : undefined}
-      onMouseUp={onClick ? () => setPressed(false) : undefined}
+      onMouseUp={onClick ? () => { setPressed(false); ripple.onMouseUp() } : undefined}
       initial={false}
       animate={{
         borderRadius: pressed ? theme.shape.medium : theme.shape.full,
@@ -273,9 +275,9 @@ export function InputChip({ label, selected, onClick, onRemove, icon, avatar, ..
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       initial={false}
       animate={{
         borderRadius: pressed ? theme.shape.medium : theme.shape.full,
@@ -335,9 +337,9 @@ export function SuggestionChip({ label, onClick, icon, ...rest }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={onClick ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false) } : undefined}
+      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false); ripple.onMouseLeave() } : undefined}
       onMouseDown={onClick ? (event) => { setPressed(true); ripple.onMouseDown(event) } : undefined}
-      onMouseUp={onClick ? () => setPressed(false) : undefined}
+      onMouseUp={onClick ? () => { setPressed(false); ripple.onMouseUp() } : undefined}
       initial={false}
       animate={{
         borderRadius: pressed ? theme.shape.medium : theme.shape.full,

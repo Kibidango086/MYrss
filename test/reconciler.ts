@@ -199,23 +199,46 @@ function idForLabelContaining(text: string): number | undefined {
   return undefined
 }
 
+/** The host element of every splash ever painted, oldest first. */
+function splashIds(): number[] {
+  const ids: number[] = []
+  for (const op of ops()) {
+    if (op[0] !== "setCustomProp" || op[2] !== "motion") continue
+    const motion = op[3] as Record<string, any>
+    const animate = motion?.animate
+    if (animate?.opacity === 0.12 && animate?.width > 1 && !ids.includes(op[1] as number)) ids.push(op[1] as number)
+  }
+  return ids
+}
+
+/** The latest motion description sent for one host element. */
+function motionOf(elementId: number) {
+  return (ops().filter(op => op[0] === "setCustomProp" && op[2] === "motion" && op[1] === elementId)
+    .at(-1)?.[3] as Record<string, any> | undefined)
+}
+
 /**
- * Dispatch a real primary press and report whether MYrss grew a splash.
+ * Press and release an app-local control, and report whether it grew a splash
+ * that finished as the control's own box.
  *
  * The app draws its own top bar, feed rows and article rows; the library only
  * ripples its own components, so this is what proves the app-local ones are
- * wired too.
+ * wired to `useRipple` — press *and* release, since releasing is what grows a
+ * splash to the element's shape (Flutter's `confirm()`).
  */
 async function press(label: string): Promise<boolean> {
   const elementId = idForLabelContaining(label)
   if (elementId === undefined) return false
-  const before = ops().length
+  const seen = new Set(splashIds())
   handleGpuixEvent({ elementId, eventType: "mouseDown", x: 0, y: 0, button: 0 } as never, renderer as never)
   await drain()
-  return ops().slice(before).some(op => op[0] === "setCustomProp" && op[2] === "motion"
-    && (op[3] as Record<string, unknown>)?.animate !== undefined
-    && (op[3] as Record<string, any>).animate.opacity === 0.12
-    && (op[3] as Record<string, any>).animate.width > 1)
+  const [splash] = splashIds().filter(id => !seen.has(id))
+  if (splash === undefined) return false
+  handleGpuixEvent({ elementId, eventType: "mouseUp" } as never, renderer as never)
+  await drain()
+  const grown = motionOf(splash)?.animate
+  return grown?.width === 200 && grown?.height === 40
+    && grown?.opacity === 0.12 && grown?.borderRadius > 0
 }
 
 function exitTweenIn(list: Op[]): boolean {

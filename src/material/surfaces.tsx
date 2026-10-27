@@ -181,9 +181,9 @@ export function MenuItem({ label, icon, trailing, disabled, onClick, ...rest }: 
       ref={ripple.ref}
       onClick={disabled ? undefined : onClick}
       onMouseEnter={disabled ? undefined : () => setHovered(true)}
-      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false) }}
+      onMouseLeave={disabled ? undefined : () => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={disabled ? undefined : (event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={disabled ? undefined : () => setPressed(false)}
+      onMouseUp={disabled ? undefined : () => { setPressed(false); ripple.onMouseUp() }}
       style={{
         width: "100%",
         height: 48,
@@ -353,9 +353,9 @@ export function Card({ children, onClick, variant = "filled", style, entranceInd
       onClick={onClick}
       onFileDrop={onFileDrop ? (event) => onFileDrop(event.paths ?? []) : undefined}
       onMouseEnter={onClick ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false) } : undefined}
+      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false); ripple.onMouseLeave() } : undefined}
       onMouseDown={onClick ? (event) => { setPressed(true); ripple.onMouseDown(event) } : undefined}
-      onMouseUp={onClick ? () => setPressed(false) : undefined}
+      onMouseUp={onClick ? () => { setPressed(false); ripple.onMouseUp() } : undefined}
       initial={entranceIndex === undefined ? { opacity: 1 } : { opacity: 0, left: 18 }}
       animate={{
         opacity: pressed ? .88 : hovered && onClick ? .96 : 1,

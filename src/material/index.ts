@@ -8,7 +8,10 @@ export { Button, FAB, FAB as Fab, IconButton, AssistChip, FilterChip, InputChip,
 export { Snackbar, CircularProgress, LinearProgress, Badge } from "./feedback.js"
 export type { CircularProgressProps, LinearProgressProps, BadgeProps } from "./feedback.js"
 export { LayoutShell, ContentContainer, LayoutFooter, Divider, ListItem, LayoutPane, Grid, SectionHeader } from "./layout.js"
-export { useRipple, RIPPLE_OPACITY, RIPPLE_RADIUS_DURATION, RIPPLE_FADE_DURATION } from "./ripple.js"
+export {
+  useRipple, RIPPLE_OPACITY, RIPPLE_UNCONFIRMED_DURATION, RIPPLE_FADE_IN_DURATION,
+  RIPPLE_RADIUS_DURATION, RIPPLE_FADE_OUT_DURATION, RIPPLE_CANCEL_DURATION,
+} from "./ripple.js"
 export type { RippleControls } from "./ripple.js"
 // Accessibility: every interactive component takes these props and expands them
 // into GPUIX's `aria-*` host props with `a11y()`.

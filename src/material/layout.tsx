@@ -92,9 +92,9 @@ export function ListItem({ headline, supporting, leading, trailing, onClick, onF
       onFileDrop={onFileDrop ? (event) => onFileDrop(event.paths ?? []) : undefined}
       {...a11y(rest, onClick ? headline : undefined, onClick ? "button" : undefined)}
       onMouseEnter={onClick ? () => setHovered(true) : undefined}
-      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false) } : undefined}
+      onMouseLeave={onClick ? () => { setHovered(false); setPressed(false); ripple.onMouseLeave() } : undefined}
       onMouseDown={onClick ? (event) => { setPressed(true); ripple.onMouseDown(event) } : undefined}
-      onMouseUp={onClick ? () => setPressed(false) : undefined}
+      onMouseUp={onClick ? () => { setPressed(false); ripple.onMouseUp() } : undefined}
       style={{
         width: "100%",
         minHeight: 56,

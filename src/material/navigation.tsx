@@ -103,9 +103,9 @@ export function NavigationItem({ label, badge, active, onClick, icon, compact, .
         ref={ripple.ref}
         onClick={onClick}
         onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => { setHovered(false); setPressed(false) }}
+        onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
         onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-        onMouseUp={() => setPressed(false)}
+        onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
         style={{
           width: 56,
           overflow: "hidden",
@@ -162,9 +162,9 @@ export function NavigationItem({ label, badge, active, onClick, icon, compact, .
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       initial={false}
       animate={{ opacity: pressed ? .86 : 1, left: pressed ? -2 : 0, borderRadius: itemRadius }}
       transition={{ duration: pressed ? .12 : .26, ease: pressed ? MOTION_EXIT : MOTION_ENTER }}
@@ -295,9 +295,9 @@ function TabButton({ item, active, variant, onClick, tabCount }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       style={{
         flexGrow: 1,
         flexShrink: 1,
@@ -387,9 +387,9 @@ function NavigationBarItem({ destination, active, onClick, destCount }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       style={{
         flexGrow: 1,
         flexShrink: 1,
@@ -524,9 +524,9 @@ function SegmentedButtonSegment({ item, selected, onClick, isFirst, isLast }: {
       ref={ripple.ref}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => { setHovered(false); setPressed(false) }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); ripple.onMouseLeave() }}
       onMouseDown={(event) => { setPressed(true); ripple.onMouseDown(event) }}
-      onMouseUp={() => setPressed(false)}
+      onMouseUp={() => { setPressed(false); ripple.onMouseUp() }}
       style={{
         flexGrow: 1,
         flexShrink: 1,
